@@ -1,0 +1,113 @@
+数字人多模态情感交互设计(2).docx 对照检查（截至当前进度）
+
+文档来源：
+- D:\0digi-human\数字人多模态情感交互设计(2).docx
+- 已抽取文本：D:\0digi-human\docx_text.txt
+
+========================================
+任务一：多模态情感感知与识别（语音+文本为主）
+========================================
+[已实现] ASR（语音转文本）
+- 采用：SenseVoice (FunASR AutoModel)
+- 证据脚本：project/scripts/sensevoice_asr_ser.py、project/scripts/pipeline_e2e_demo.py
+- 输出字段：asr_text
+
+[已实现] SER（语音情感识别）
+- 采用：SenseVoice 输出 emotion token（如 <|NEUTRAL|>）
+- 证据脚本：project/scripts/sensevoice_asr_ser.py（解析 raw_text_with_tags -> audio_emotion）
+- 输出字段：audio_emotion_raw、audio_emotion（4类映射）
+
+[部分实现] 文本情感识别（文本语义理解）
+- 当前实现：关键词/规则的轻量文本情感判断（angry/sad/happy/neutral）
+- 证据脚本：project/scripts/pipeline_e2e_demo.py（detect_text_emotion）
+- 输出字段：text_emotion、text_confidence
+- 待增强：替换为可训练/可评测的文本情感模型（如 RoBERTa/GoEmotions 映射）或更强规则+数据集
+
+[已实现] 跨模态融合仲裁（冲突处理）
+- 当前实现：基于情感计算理论的规则仲裁（示例：语音neutral但文本负向/终止语义 -> 偏向文本）
+- 证据脚本：project/scripts/pipeline_e2e_demo.py（fuse_emotion + has_negative_termination）
+- 输出字段：final_emotion、fusion_reason
+- 待增强：冲突集≥100条与仲裁准确率统计脚本
+
+[未实现/可选] 视觉模态补充
+- 文档定位：任务四为可选模块
+
+========================================
+任务二：情感认知与对话生成（文本为主）
+========================================
+[已实现] 基于情感的共情回复生成
+- 采用：本地 llama.cpp（Qwen3-8B GGUF）通过 llama-server OpenAI兼容接口
+- 证据脚本：project/scripts/start_llama_server.py、project/scripts/regression_20.py、project/scripts/pipeline_e2e_demo.py
+
+[已实现] 结构化标签输出（用于驱动TTS）
+- 输出结构：{"emotion":"happy|sad|angry|neutral","reply_text":"..."}
+- 证据脚本：project/scripts/pipeline_e2e_demo.py（task2_empathic_reply）
+- 稳定性证据：project/scripts/regression_20.py 回归 20/20 通过（JSON 可解析率 100%）
+
+========================================
+任务三：情感化语音合成（TTS）
+========================================
+[已实现] TTS 控制参数（语速/音高/强度等）结构化输出（参数层）
+- 当前实现：根据 emotion 生成 tts_params 预设（speed/pitch_semitone/energy/emotion_intensity/pause_ms）
+- 证据脚本：project/scripts/pipeline_e2e_demo.py（task3_tts_control + build_tts_params）
+
+[已实现] 将 task2 输出真正合成为音频 wav（任务三音频输出闭环）
+- 已下载：Qwen3-TTS-12Hz-0.6B-Base + Qwen3-TTS-Tokenizer-12Hz（本地 models 目录）
+- 已实现：task3_tts_control -> Qwen3-TTS 推理 -> 生成 wav 的脚本
+  - 证据脚本：project/scripts/tts_qwen3_from_pipeline.py
+- 已实现：通用音频转 wav 脚本（用于把 m4a/mp3 等转为 16k 单声道 wav）
+  - 证据脚本：project/scripts/convert_audio_to_wav.py
+- 已实现：自动保存音色配置（voice_profile.json）并支持按 voice_id 复用
+- 已实现：支持音色缓存（voice clone prompt）构建与复用
+- 当前说明：未安装 flash-attn 仅影响速度，不影响功能正确性
+- 待增强：
+  - 若要“原生可控”而非后处理：评估并切换到支持 instruct 的 Qwen3-TTS 变体（CustomVoice/VoiceDesign）
+  - 准备 4 类情感各 1 条合成音频样本（交付物）
+
+========================================
+任务四：情感化视觉表达（可选）
+========================================
+[未实现]
+- 音频驱动口型/表情、语义驱动动作、音画同步等尚未接入
+
+========================================
+交付物对照（文档“交付物要求”）
+========================================
+[已实现] 代码仓库：模块化脚本与环境说明
+- README：D:\0digi-human\README.md
+- 依赖：D:\0digi-human\requirements.txt
+- 核心脚本：project/scripts/*.py
+
+[待实现] 评测表格（单模态/融合准确率对比 + 3个用例完整测试）
+- 当前已有：LLM JSON 回归报告（project/outputs/regression_20_report.json）
+- 待补：SER准确率、文本情感准确率、融合仲裁准确率的统计与表格输出
+
+[待实现] 音频样本：Happy/Sad/Angry/Neutral 各一条合成音频
+- 当前状态：生成链路已打通；需补齐 4 类固定样本并整理命名
+
+[待实现] 演示录屏：冲突用例完整流程展示
+- 建议素材：选择“语音neutral + 文本终止/负向”触发仲裁规则的用例
+
+========================================
+已实现端到端最小链路（当前可演示）
+========================================
+- 音频 -> SenseVoice(ASR+SER) -> 文本情感(规则) -> 融合仲裁 -> llama-server(JSON共情回复) -> TTS参数(JSON)
+- 一键脚本：project/scripts/pipeline_e2e_demo.py
+- 任务三执行脚本：project/scripts/tts_qwen3_from_pipeline.py（支持 --use-voice-id / --use-voice-cache）
+
+========================================
+还需要做什么（最小收尾清单）
+========================================
+1) 产出交付音频样本（4条）
+- 生成 Happy / Sad / Angry / Neutral 各 1 条 wav，放到 project/outputs/examples/
+
+2) 产出评测表（可先轻量版）
+- 汇总 ASR/SER/文本情感/融合仲裁/任务2 JSON 成功率，至少覆盖 3 个完整用例
+
+3) 固化演示脚本与录屏
+- 选择“语音neutral + 文本负向”冲突用例，录制完整处理流程（输入 -> 仲裁 -> 回复 -> TTS输出）
+
+4) 清理并准备上传
+- 补齐 .gitignore（模型权重、缓存、临时输出）
+- 检查 README 与 requirements 是否和当前代码一致
+

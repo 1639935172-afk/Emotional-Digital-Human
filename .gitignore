@@ -1,0 +1,33 @@
+﻿# Python cache
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Large models / weights
+project/models/
+*.gguf
+*.safetensors
+*.pt
+*.pth
+*.onnx
+
+# External repos and temp
+SenseVoice-main/
+cnsenti-master/
+tmp/
+docx_text.txt
+
+# Office temp
+~$*.docx
+
+# Output artifacts
+project/outputs/**
+!project/outputs/examples/**
+
+# IDE/OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

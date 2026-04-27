@@ -1,0 +1,2 @@
+﻿ /no_think
+你必须只输出一行严格合法JSON，不要markdown，不要解释，不要多余字符。schema:{"emotion":"happy|sad|angry|neutral","reply_text":"string"} 用户：我今天有点累，但还好。
