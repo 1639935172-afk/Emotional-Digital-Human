@@ -1,4 +1,4 @@
-﻿# Python cache
+# Python cache
 **/__pycache__/
 *.pyc
 *.pyo
@@ -26,8 +26,28 @@ docx_text.txt
 project/outputs/**
 !project/outputs/examples/**
 
+# Audio artifacts
+*.wav
+*.m4a
+*.mp3
+*.flac
+*.ogg
+*.aac
+*.wma
+
 # IDE/OS
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
+
+
+# downloads/temp
+*.crdownload
+
+# docs/binaries
+*.docx
+
+# samples/audio raw
+project/samples/**
+!project/samples/.gitkeep
