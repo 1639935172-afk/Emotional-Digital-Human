@@ -94,6 +94,18 @@ def parse_args() -> argparse.Namespace:
         default=300,
         help="单次 TTS 生成超时秒数，<=0 表示不限制，默认 300",
     )
+    p.add_argument(
+        "--disable-postprocess",
+        action="store_true",
+        help="禁用 apply_tts_params 后处理，直接输出模型原始波形",
+    )
+    p.add_argument(
+        "--enable-postprocess",
+        dest="disable_postprocess",
+        action="store_false",
+        help="启用 apply_tts_params 后处理（默认关闭）",
+    )
+    p.set_defaults(disable_postprocess=True)
     return p.parse_args()
 
 
@@ -322,7 +334,8 @@ def main() -> int:
 
     t4 = time.perf_counter()
     wav = _ensure_mono_float32(np.asarray(wavs[0]))
-    wav = apply_tts_params(wav, sr, tts_params)
+    if not args.disable_postprocess:
+        wav = apply_tts_params(wav, sr, tts_params)
     print(f"[TIME] postprocess_params: {time.perf_counter() - t4:.2f}s")
 
     t5 = time.perf_counter()

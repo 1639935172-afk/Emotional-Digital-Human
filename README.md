@@ -40,6 +40,8 @@
   将 `m4a/mp3/flac/...` 批量转换为 `16k` 单声道 `wav`
 - `project/scripts/tts_qwen3_from_pipeline.py`  
   读取 `pipeline_e2e_result.json` 的 `task3_tts_control`，调用 Qwen3-TTS 生成 `wav`，并支持 `voice_id` 与缓存
+- `project/scripts/generate_emotion_samples.py`  
+  一次性生成 `Happy/Sad/Angry/Neutral` 四条情感样本音频
 - `project/models/`  
   本地模型目录（Qwen3-8B-GGUF、Qwen3-TTS、Tokenizer 等）
 - `project/outputs/`  
@@ -111,7 +113,7 @@ python "D:\0digi-human\project\scripts\pipeline_e2e_demo.py" --audio "D:\0digi-h
 ### 4.5 参考音频转 16k wav（建议）
 
 ```powershell
-python ".\project\scripts\convert_audio_to_wav.py" --input ".\project\samples\20260415_193009.m4a" --output-dir ".\project\samples" --overwrite
+python ".\project\scripts\convert_audio_to_wav.py" --overwrite
 ```
 
 ### 4.6 任务三音频合成（Qwen3-TTS）
@@ -127,6 +129,23 @@ python ".\project\scripts\tts_qwen3_from_pipeline.py" --pipeline-json ".\project
 ```powershell
 python ".\project\scripts\tts_qwen3_from_pipeline.py" --pipeline-json ".\project\outputs\pipeline_e2e_result.json" --use-voice-id zjh --use-voice-cache --output ".\project\outputs\tts_from_pipeline.wav" --device cuda:0
 ```
+
+说明：`tts_qwen3_from_pipeline.py` 现已默认关闭后处理（等价于 `--disable-postprocess`），若需开启后处理可手动添加 `--enable-postprocess`。
+
+### 4.7 一键生成四类情感样本音频
+
+复用已有 `voice_id` 与缓存：
+
+```powershell
+python ".\project\scripts\generate_emotion_samples.py" --use-voice-id zjh --use-voice-cache --device cuda:0 --output-dir ".\project\outputs\examples"
+```
+
+首次构建（需给参考音频和文本）：
+
+```powershell
+python ".\project\scripts\generate_emotion_samples.py" --ref-audio ".\project\samples\20260415_193009_16k.wav" --ref-text "一二三四五。" --voice-id zjh --build-voice-cache --use-voice-cache --device cuda:0 --output-dir ".\project\outputs\examples"
+```
+
 ---
 
 ## 5. 关键输出格式
@@ -179,7 +198,34 @@ python ".\project\scripts\tts_qwen3_from_pipeline.py" --pipeline-json ".\project
 ## 7. 下一步（交付收尾）
 
 - 生成 4 类情感样本音频（Happy/Sad/Angry/Neutral）并整理到 `project/outputs/examples/`
-- 增加轻量评测表（ASR/SER/融合仲裁/JSON 成功率 + 3 个完整用例）
 - 录制 1 个冲突用例演示视频（语音 neutral + 文本负向）
 - 完善 `.gitignore` 与仓库发布说明（避免上传权重与缓存）
+
+---
+
+## 8. 白名单提交（防止大文件误传）
+
+先检查将被提交的文件：
+
+```powershell
+git status --short
+```
+
+只白名单添加需要的文件：
+
+```powershell
+git add README.md project/scripts/generate_emotion_samples.py
+```
+
+二次确认暂存区：
+
+```powershell
+git diff --cached --name-only
+```
+
+确认无模型/缓存/大音频后再提交推送：
+
+```powershell
+git commit -m "Update README for current script behaviors" && git push origin master
+```
 

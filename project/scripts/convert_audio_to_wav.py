@@ -10,7 +10,7 @@ SUPPORTED_EXTS = {".m4a", ".mp3", ".flac", ".ogg", ".aac", ".wma", ".mp4", ".wav
 def parse_args() -> argparse.Namespace:
     script_dir = Path(__file__).resolve().parent
     project_dir = script_dir.parent
-    default_input = project_dir / "samples" / "20260415_193009.m4a"
+    default_input = project_dir / "samples"
     default_output_dir = project_dir / "samples"
 
     p = argparse.ArgumentParser(description="Convert audio file(s) to wav via ffmpeg")
@@ -43,7 +43,7 @@ def collect_inputs(input_path: Path) -> list[Path]:
     if input_path.is_file():
         return [input_path]
     if input_path.is_dir():
-        files = [p for p in input_path.iterdir() if p.is_file() and p.suffix.lower() in SUPPORTED_EXTS]
+        files = [p for p in input_path.rglob("*") if p.is_file() and p.suffix.lower() in SUPPORTED_EXTS]
         return sorted(files)
     raise FileNotFoundError(f"输入路径不存在: {input_path}")
 
@@ -75,6 +75,10 @@ def main() -> int:
 
     ok = 0
     for src in inputs:
+        # 避免把已转换输出（如 xxx_16k.wav）再次转换，导致重复文件链式增长
+        if src.suffix.lower() == ".wav" and src.stem.endswith(args.suffix):
+            print(f"[SKIP] already converted: {src}")
+            continue
         out_name = f"{src.stem}{args.suffix}.wav"
         dst = output_dir / out_name
         try:
