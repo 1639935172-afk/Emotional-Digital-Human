@@ -1,231 +1,270 @@
 # 数字人多模态情感交互 Demo
 
-本项目目标是构建一个可演示的端到端闭环：
+本项目用于构建一个可演示的端到端数字人多模态情感交互闭环：
 
-`音频输入 -> ASR -> 情感识别/仲裁 -> LLM 共情回复(JSON) -> 情感TTS -> 音频输出`
+`音频/文本输入 -> ASR -> SER + 文本情感 + Qwen 语义情绪判断 -> 情感仲裁融合 -> LLM 共情回复(JSON) -> 情感 TTS -> 音频输出`
 
-当前已完成任务 1/2/3 的可运行闭环版本（含音频输出）。
-
----
-
-## 1. 当前实现状态
-
-- 已跑通 `Qwen3-8B-GGUF + llama.cpp` 本地推理与 API 服务
-- 已完成 LLM JSON 稳定性回归：20/20 通过，JSON 可解析率 100%
-- 已跑通 `SenseVoice`（GPU）：
-  - 音频转文本（ASR）
-  - 语音情感标签提取（SER token）
-- 已实现任务 1：规则仲裁输出 `final_emotion`
-- 已实现任务 2：基于仲裁情感生成共情回复，结构化输出：
-  - `emotion`
-  - `reply_text`
-- 已实现任务 3：`task3_tts_control -> Qwen3-TTS -> wav` 音频输出闭环
-- 已支持音色配置保存与复用：
-  - `voice_profile.json`（按 `voice_id` 管理）
-  - `voice cache`（`create_voice_clone_prompt` 缓存并复用）
+主情感标签统一为：`happy / sad / angry / neutral`。当前目标是先完成稳定可演示版本，再继续优化指标、语音质量和评测覆盖。
 
 ---
 
-## 2. 目录说明
+## 当前状态
 
-- `project/scripts/start_llama_server.py`  
-  启动 `llama-server`（支持自动打开网页，支持环境变量软编码）
-- `project/scripts/regression_20.py`  
-  对本地 LLM 接口做 20 条 JSON 输出回归
-- `project/scripts/sensevoice_asr_ser.py`  
-  运行 SenseVoice，输出 `asr_text + audio_emotion`
-- `project/scripts/pipeline_e2e_demo.py`  
-  端到端串联任务 1 + 任务 2 + 任务 3 参数层
-- `project/scripts/convert_audio_to_wav.py`  
-  将 `m4a/mp3/flac/...` 批量转换为 `16k` 单声道 `wav`
-- `project/scripts/tts_qwen3_from_pipeline.py`  
-  读取 `pipeline_e2e_result.json` 的 `task3_tts_control`，调用 Qwen3-TTS 生成 `wav`，并支持 `voice_id` 与缓存
-- `project/scripts/generate_emotion_samples.py`  
-  一次性生成 `Happy/Sad/Angry/Neutral` 四条情感样本音频
-- `project/models/`  
-  本地模型目录（Qwen3-8B-GGUF、Qwen3-TTS、Tokenizer 等）
-- `project/outputs/`  
-  结果输出目录（回归报告、pipeline 输出、音频文件）
-
----
-
-## 2.1 第三方开源项目说明（SenseVoice）
-
-本项目中的 ASR 与语音情感识别能力基于第三方开源项目 **SenseVoice**，该项目并非本仓库原创。
-
-- Project: SenseVoice
-- Source: [FunAudioLLM/SenseVoice](https://github.com/FunAudioLLM/SenseVoice)
-- Main capability used here: ASR + SER (emotion tokens)
-- Upstream docs: `SenseVoice-main/README_zh.md`
-
-本仓库对 SenseVoice 的使用方式主要是工程集成（调用推理接口、解析输出标签、映射到 4 类情感），不包含对 SenseVoice 模型本体权重的再发布。  
-请在实际分发与商用前，遵循上游仓库与模型页面中的许可证与使用条款。
+- 本地 `Qwen3-8B GGUF + llama.cpp` 已接入 OpenAI 兼容接口。
+- `web_demo_app.py` 默认可自动启动本地 llama-server。
+- 默认 GGUF 模型路径：
+  - `project/models/Qwen3-8B-GGUF/Qwen3-8B-Q4_K_M.gguf`
+- SenseVoice 已用于：
+  - ASR 音频转文本
+  - SER 语音情感 token 解析
+- 文本情感已接入本地开源模型：
+  - `project/models/Chinese-Emotion-Small`
+  - 模块：`project/scripts/text_emotion_model.py`
+  - `text_confidence` 来自模型 softmax 概率
+- Web Demo 已支持：
+  - 多轮上下文对话
+  - 每个对话窗口持久化为 JSON
+  - 左侧历史会话列表
+  - 会话置顶、重命名、删除
+  - 重启 Web Demo 后恢复历史会话和完整响应
+  - Qwen 语义情绪判断 + SenseVoice 语音情绪 + 文本模型情绪的融合仲裁
+  - 可选 TTS 生成和网页播放
+- TTS 当前默认高保真优先：
+  - 默认禁用后处理
+  - 支持固定参考音频
+  - 支持 `voice_id` 和 voice cache
 
 ---
 
-## 3. 环境建议
+## 主要脚本
 
-推荐使用两个环境隔离：
+- `project/scripts/web_demo_app.py`
+  - Web Demo 主入口
+  - 自动启动 llama-server
+  - 加载文本情感模型
+  - 执行 ASR/SER、文本情感、Qwen 语义判断、融合仲裁、共情回复、TTS
+  - 管理会话 JSON 持久化
 
-- `digi-human`：LLM 侧（llama.cpp 客户端/服务调用）
-- `sensevoice`：ASR/SER/TTS 侧（funasr、qwen-tts 等）
+- `project/scripts/text_emotion_model.py`
+  - 中文文本情感分类模块
+  - 默认模型路径：`project/models/Chinese-Emotion-Small`
+  - 支持命令行测试
 
-> 注意：RTX 5060（sm_120）建议使用支持新架构的 PyTorch nightly cu128 组合。
+- `project/scripts/start_llama_server.py`
+  - 单独启动 llama-server
+  - Web Demo 现在也能自动启动同一 GGUF 模型
+
+- `project/scripts/pipeline_e2e_demo.py`
+  - 离线端到端 pipeline
+
+- `project/scripts/sensevoice_asr_ser.py`
+  - SenseVoice ASR + SER 单独测试
+
+- `project/scripts/tts_qwen3_from_pipeline.py`
+  - 从 pipeline JSON 生成 Qwen3-TTS 音频
+
+- `project/scripts/convert_audio_to_wav.py`
+  - 批量转换 `project/samples` 下音频为 16k wav
 
 ---
 
-## 4. 快速开始
+## 快速启动
 
-### 4.1 启动本地 LLM 服务（llama-server）
+推荐在 `sensevoice` 环境运行 Web Demo：
 
 ```powershell
-python "D:\0digi-human\project\scripts\start_llama_server.py"
+conda activate sensevoice; python "D:\0digi-human\project\scripts\web_demo_app.py"
 ```
 
-默认会自动打开浏览器。若不想自动打开：
+默认会：
+
+- 自动检查/启动 llama-server
+- 使用默认 Qwen3-8B GGUF
+- 预加载本地文本情感模型
+- 启动 Web Demo：`http://127.0.0.1:7860`
+
+显式指定会话目录：
 
 ```powershell
-python "D:\0digi-human\project\scripts\start_llama_server.py" --no-browser
+conda activate sensevoice; python "D:\0digi-human\project\scripts\web_demo_app.py" --session-dir "D:\0digi-human\project\outputs\web_demo\sessions"
 ```
 
-### 4.2 运行 LLM JSON 回归（20 条）
+不自动启动 LLM：
 
 ```powershell
-python "D:\0digi-human\project\scripts\regression_20.py"
+conda activate sensevoice; python "D:\0digi-human\project\scripts\web_demo_app.py" --no-auto-start-llm
 ```
 
-输出报告：
-
-`D:\0digi-human\project\outputs\regression_20_report.json`
-
-### 4.3 运行 SenseVoice ASR + SER
+不预加载文本情感模型：
 
 ```powershell
-python "D:\0digi-human\project\scripts\sensevoice_asr_ser.py" --audio "D:\0digi-human\project\samples\20260415_193009.m4a" --device "cuda:0" --disable-update
+conda activate sensevoice; python "D:\0digi-human\project\scripts\web_demo_app.py" --no-preload-text-emotion
 ```
 
-### 4.4 运行端到端任务 1/2/3（参数层）
+关闭 Qwen 语义情绪判断：
 
 ```powershell
-python "D:\0digi-human\project\scripts\pipeline_e2e_demo.py" --audio "D:\0digi-human\project\samples\20260415_193009.m4a" --device "cuda:0" --disable-update --llm-url "http://127.0.0.1:8080/v1/chat/completions" --llm-model "Qwen3-8B-Q4_K_M.gguf" --output "D:\0digi-human\project\outputs\pipeline_e2e_result.json"
-```
-
-### 4.5 参考音频转 16k wav（建议）
-
-```powershell
-python ".\project\scripts\convert_audio_to_wav.py" --overwrite
-```
-
-### 4.6 任务三音频合成（Qwen3-TTS）
-
-首次（构建音色缓存并生成）：
-
-```powershell
-python ".\project\scripts\tts_qwen3_from_pipeline.py" --pipeline-json ".\project\outputs\pipeline_e2e_result.json" --ref-audio ".\project\samples\20260415_193009_16k.wav" --ref-text "一二三四五。" --voice-id zjh --build-voice-cache --use-voice-cache --output ".\project\outputs\tts_from_pipeline.wav" --device cuda:0
-```
-
-后续（直接复用 voice_id + cache）：
-
-```powershell
-python ".\project\scripts\tts_qwen3_from_pipeline.py" --pipeline-json ".\project\outputs\pipeline_e2e_result.json" --use-voice-id zjh --use-voice-cache --output ".\project\outputs\tts_from_pipeline.wav" --device cuda:0
-```
-
-说明：`tts_qwen3_from_pipeline.py` 现已默认关闭后处理（等价于 `--disable-postprocess`），若需开启后处理可手动添加 `--enable-postprocess`。
-
-### 4.7 一键生成四类情感样本音频
-
-复用已有 `voice_id` 与缓存：
-
-```powershell
-python ".\project\scripts\generate_emotion_samples.py" --use-voice-id zjh --use-voice-cache --device cuda:0 --output-dir ".\project\outputs\examples"
-```
-
-首次构建（需给参考音频和文本）：
-
-```powershell
-python ".\project\scripts\generate_emotion_samples.py" --ref-audio ".\project\samples\20260415_193009_16k.wav" --ref-text "一二三四五。" --voice-id zjh --build-voice-cache --use-voice-cache --device cuda:0 --output-dir ".\project\outputs\examples"
+conda activate sensevoice; python "D:\0digi-human\project\scripts\web_demo_app.py" --disable-llm-semantic-emotion
 ```
 
 ---
 
-## 5. 关键输出格式
+## 文本情感模型测试
 
-`pipeline_e2e_demo.py` 输出示意：
+直接测试：
+
+```powershell
+conda run -n sensevoice python project\scripts\text_emotion_model.py "我今天真的很开心"
+```
+
+紧凑 JSON 输出：
+
+```powershell
+conda run -n sensevoice python project\scripts\text_emotion_model.py "我有点难过，感觉撑不住了" --compact
+```
+
+指定模型路径：
+
+```powershell
+conda run -n sensevoice python project\scripts\text_emotion_model.py "我现在很担心任务完成不了" --model "D:\0digi-human\project\models\Chinese-Emotion-Small" --device cuda:0
+```
+
+输出字段说明：
+
+- `emotion`：映射后的四类情感
+- `confidence`：模型 softmax 概率
+- `confidence_type`：`softmax_probability`
+- `raw_label`：模型原始标签
+- `raw_scores`：原始类别概率分布
+
+---
+
+## Web Demo 会话持久化
+
+默认会话目录：
+
+```text
+project/outputs/web_demo/sessions
+```
+
+结构：
+
+```text
+project/outputs/web_demo/sessions/
+  index.json
+  <session_id>.json
+```
+
+每个 `<session_id>.json` 保存：
+
+- 会话标题
+- 是否置顶
+- 创建/更新时间
+- 每轮用户输入
+- 每轮 AI 回复
+- 完整响应 JSON
+- TTS 音频 URL
+
+重启 Web Demo 时，前端会通过 `/api/sessions` 和 `/api/sessions/{session_id}` 恢复历史会话，并将历史 turns 重建为后端上下文。
+
+---
+
+## 情感仲裁逻辑
+
+当前 Web Demo 的情绪来源包括：
+
+1. SenseVoice 语音情绪：`audio_emotion`
+2. 中文文本情感模型：`text_emotion + text_confidence`
+3. 本地 Qwen 语义情绪判断：`semantic_emotion`
+
+融合时优先处理：
+
+- 语音 `neutral`，但 Qwen 语义为 `sad/angry` 且置信较高
+- 文本模型 `neutral`，但 Qwen 语义识别到担心、焦虑、压力、愤怒等
+- 语音 `angry` 等高唤醒情绪与文本中性冲突
+- 多源一致时直接采用一致情绪
+
+最终输出示例：
 
 ```json
 {
-  "task1_emotion_arbitration": {
-    "asr_text": "...",
-    "audio_emotion": "neutral",
-    "text_emotion": "sad",
-    "final_emotion": "sad",
-    "fusion_reason": "rule:audio_neutral_text_negative_override"
-  },
-  "task2_empathic_reply": {
-    "emotion": "sad",
-    "reply_text": "听起来你有点难受，我在这里陪你。"
-  },
-  "task3_tts_control": {
-    "text": "听起来你有点难受，我在这里陪你。",
-    "emotion": "sad",
-    "tts_params": {
-      "speed": 0.9,
-      "pitch_semitone": -1.2,
-      "energy": 0.82,
-      "emotion_intensity": 0.68,
-      "pause_ms": 240
-    }
-  }
+  "final_emotion": "sad",
+  "fusion_reason": "rule:audio_neutral_semantic_negative_override"
 }
 ```
 
 ---
 
-## 6. 已知问题与建议
+## 共情回复逻辑
 
-- `m4a` 作为 TTS 参考音频时，可能触发 `sox` 相关警告；建议先转为 `16k wav` 再做克隆
-- `flash-attn` 未安装时仅影响速度，不影响功能可用性
-- `voice cache` 在 PyTorch 2.6+ 下可能触发反序列化安全限制；脚本已做兼容回退处理
-- 若部署机器路径变化，优先使用环境变量：
-  - `LLAMA_SERVER_EXE`
-  - `LLAMA_MODEL_PATH`
-  - `QWEN3_TTS_MODEL_PATH`
-  - `VOICE_PROFILE_PATH`
-  - `VOICE_CACHE_DIR`
+回复由本地 Qwen 生成，但 `emotion` 会被强制对齐到仲裁后的 `final_emotion`。
 
----
+当前回复原则：
 
-## 7. 下一步（交付收尾）
-
-- 生成 4 类情感样本音频（Happy/Sad/Angry/Neutral）并整理到 `project/outputs/examples/`
-- 录制 1 个冲突用例演示视频（语音 neutral + 文本负向）
-- 完善 `.gitignore` 与仓库发布说明（避免上传权重与缓存）
+- 普通问题直接回答
+- 用户表达难受、担心、生气时，先回应情绪，再给一句有用支持
+- 用户明确问怎么办时，再给具体建议
+- 用户感谢、确认或打招呼时，简短回应
+- 不编造用户身份
+- 不把所有话题都套成任务/作业/步骤建议
+- LLM 未返回 JSON 时会自动容错，不让 Web Demo 整轮失败
 
 ---
 
-## 8. 白名单提交（防止大文件误传）
+## TTS 说明
 
-先检查将被提交的文件：
+当前 TTS 默认高保真优先，`tts_qwen3_from_pipeline.py` 默认禁用后处理。
+
+固定参考音频推荐：
+
+```powershell
+$env:WEB_TTS_REF_AUDIO="D:\0digi-human\project\samples\20260415_193009_16k.wav"; $env:WEB_TTS_REF_TEXT="一二三四五。"; conda activate sensevoice; python "D:\0digi-human\project\scripts\web_demo_app.py"
+```
+
+离线生成：
+
+```powershell
+python ".\project\scripts\tts_qwen3_from_pipeline.py" --pipeline-json ".\project\outputs\pipeline_e2e_result.json" --use-voice-id zjh --use-voice-cache --output ".\project\outputs\tts_from_pipeline.wav" --device cuda:0
+```
+
+---
+
+## 重要环境变量
+
+- `LLAMA_SERVER_EXE`
+- `LLAMA_MODEL_PATH`
+- `LLM_URL`
+- `LLM_MODEL`
+- `TEXT_EMOTION_MODEL`
+- `TEXT_EMOTION_DEVICE`
+- `WEB_DEMO_SESSION_DIR`
+- `WEB_TTS_REF_AUDIO`
+- `WEB_TTS_REF_TEXT`
+- `VOICE_PROFILE_PATH`
+- `VOICE_CACHE_DIR`
+
+---
+
+## Git 提交注意
+
+模型、缓存、输出音频、会话 JSON 不应提交。
+
+提交前检查：
 
 ```powershell
 git status --short
-```
-
-只白名单添加需要的文件：
-
-```powershell
-git add README.md project/scripts/generate_emotion_samples.py
-```
-
-二次确认暂存区：
-
-```powershell
 git diff --cached --name-only
 ```
 
-确认无模型/缓存/大音频后再提交推送：
+建议白名单提交：
 
 ```powershell
-git commit -m "Update README for current script behaviors" && git push origin master
+git add README.md check.txt project/scripts/web_demo_app.py project/scripts/text_emotion_model.py
 ```
 
+确认没有模型、大音频、缓存后再提交：
+
+```powershell
+git commit -m "Update web demo context and emotion arbitration"
+git push origin master
+```
