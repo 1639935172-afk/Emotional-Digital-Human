@@ -233,8 +233,11 @@ def run_asr_ser(audio_path: Path) -> Dict[str, str]:
     asr_text, audio_emo_raw, audio_emotion = parse_sensevoice_result(raw_text)
     return {
         "asr_text": asr_text,
+        "sensevoice_text_raw": raw_text,
         "audio_emotion_raw": audio_emo_raw,
         "audio_emotion": audio_emotion,
+        "sensevoice_raw_result": json_safe(sv_res),
+        "sensevoice_first_result": json_safe(first),
     }
 
 
@@ -317,6 +320,76 @@ def write_json_file(path: Path, data: Any) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     tmp.replace(path)
+
+
+def is_relative_to_path(path: Path, parent: Path) -> bool:
+    try:
+        path.resolve().relative_to(parent.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def delete_session_pipeline_jsons(doc: Dict[str, Any]) -> Dict[str, Any]:
+    deleted: List[str] = []
+    skipped: List[str] = []
+    turns = doc.get("turns", [])
+    if not isinstance(turns, list):
+        return {"deleted": deleted, "skipped": skipped}
+    for turn in turns:
+        if not isinstance(turn, dict):
+            continue
+        full_response = turn.get("full_response", {})
+        if not isinstance(full_response, dict):
+            continue
+        pipeline_json = str(full_response.get("pipeline_json") or "").strip()
+        if not pipeline_json:
+            continue
+        path = Path(pipeline_json)
+        if not path.is_absolute():
+            path = PROJECT_ROOT / path
+        if not is_relative_to_path(path, OUTPUT_JSON):
+            skipped.append(str(path))
+            continue
+        if path.exists() and path.is_file():
+            path.unlink()
+            deleted.append(str(path))
+    return {"deleted": deleted, "skipped": skipped}
+
+
+def json_safe(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key): json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [json_safe(item) for item in value]
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    if hasattr(value, "item"):
+        try:
+            return value.item()
+        except Exception:
+            pass
+    if hasattr(value, "tolist"):
+        try:
+            return json_safe(value.tolist())
+        except Exception:
+            pass
+    return str(value)
+
+
+def repair_mojibake_text(text: str) -> str:
+    if not text:
+        return text
+    markers = ("锛", "鍚", "绛", "涓", "浣", "熶", "犵", "殑")
+    if not any(marker in text for marker in markers):
+        return text
+    try:
+        repaired = text.encode("gbk", errors="strict").decode("utf-8", errors="strict")
+    except Exception:
+        return text
+    return repaired if repaired else text
 
 
 def make_session_title(text: str) -> str:
@@ -515,13 +588,11 @@ def call_llm_reply_with_history(
     timeout: int,
 ) -> Dict[str, Any]:
     system_prompt = (
-        "/no_think 你是一个自然、温和的中文对话助手。"
+        "/no_think 你是数字人情感交互助手，运行在一个多模态情感交互 Web Demo 中。"
+        "你以这个应用助手身份和用户对话，不自称通义千问、Qwen 或语言模型。"
         "按用户当前这句话正常回应，不要生硬套模板。"
         "普通问题就直接回答；表达难受、担心、生气时，先回应情绪，再给一句有用的支持。"
-        "如果用户问自己的身份，例如“我是谁”，不要编造，只说明你无法知道他的真实身份，可以请他介绍自己。"
-        "用户明确问怎么办时，再给具体建议；用户只是感谢、确认或打招呼时，简短回应即可。"
-        "不要把所有话题都引到任务、作业、步骤或推进上。"
-        "回复要结合当前输入，不要重复上一轮建议；20到60个中文字符。"
+        "回复要结合当前输入，不要重复上一轮建议；20到80个中文字符。"
         "你必须只输出一行严格合法 JSON，不要 markdown，不要解释。"
         'schema: {"emotion":"happy|sad|angry|neutral","reply_text":"string"}。'
         "其中 emotion 必须等于给定 final_emotion。"
@@ -558,11 +629,6 @@ def call_llm_reply_with_history(
                 {
                     "final_emotion": final_emotion,
                     "user_text": user_text,
-                    "reply_requirements": [
-                        "按当前用户输入自然回应",
-                        "不要无关延续上一轮建议",
-                        "只在用户表达困难或求助时给建议",
-                    ],
                 },
                 ensure_ascii=False,
             ),
@@ -574,22 +640,39 @@ def call_llm_reply_with_history(
         "max_tokens": max_tokens,
         "messages": messages,
     }
-    req = Request(
-        url=llm_url,
-        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-        headers={"Content-Type": "application/json; charset=utf-8"},
-        method="POST",
-    )
-    with urlopen(req, timeout=timeout) as resp:
-        body = json.loads(resp.read().decode("utf-8", errors="replace"))
-    content = body["choices"][0]["message"]["content"]
+    content = ""
+    content_source = "content"
+    retry_count = 0
+    for attempt in range(2):
+        req = Request(
+            url=llm_url,
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={"Content-Type": "application/json; charset=utf-8"},
+            method="POST",
+        )
+        with urlopen(req, timeout=timeout) as resp:
+            body = json.loads(resp.read().decode("utf-8", errors="replace"))
+        message = body["choices"][0]["message"]
+        content = str(message.get("content") or "")
+        content_source = "content"
+        if not content.strip() and message.get("reasoning_content"):
+            content = str(message.get("reasoning_content") or "")
+            content_source = "reasoning_content"
+        content = repair_mojibake_text(content)
+        if content.strip():
+            break
+        retry_count = attempt + 1
+    parse_error = None
+    fallback_used = False
     try:
         parsed = extract_json(content)
-    except Exception:
+    except Exception as exc:
+        parse_error = str(exc)
         cleaned = (content or "").strip()
         if cleaned and "{" not in cleaned and "}" not in cleaned:
             parsed = {"emotion": final_emotion, "reply_text": cleaned}
         else:
+            fallback_used = True
             parsed = {"emotion": final_emotion, "reply_text": fallback_empathic_reply(final_emotion, user_text)}
     emotion = str(parsed.get("emotion", "")).strip().lower()
     reply_text = str(parsed.get("reply_text", "")).strip()
@@ -598,100 +681,26 @@ def call_llm_reply_with_history(
     if emotion != final_emotion:
         emotion = final_emotion
     if not reply_text:
+        fallback_used = True
         reply_text = fallback_empathic_reply(final_emotion, user_text)
     reply_text = polish_empathic_reply(reply_text, final_emotion, user_text)
-    return {"emotion": emotion, "reply_text": reply_text}
+    return {
+        "emotion": emotion,
+        "reply_text": reply_text,
+        "llm_raw_content": content,
+        "llm_content_source": content_source,
+        "llm_parse_error": parse_error,
+        "llm_fallback_used": fallback_used,
+        "llm_empty_retry_count": retry_count,
+    }
 
 
 def fallback_empathic_reply(emotion: str, user_text: str = "") -> str:
-    text = user_text or ""
-    if is_user_identity_question(text):
-        return "我还不知道你的真实身份，但你可以告诉我你希望我怎么称呼你。"
-    if is_identity_question(text):
-        return "我是你的数字人情感交互助手，可以陪你聊天，也能根据语音和文字理解情绪。"
-    if is_greeting(text):
-        return "你好，我在这里。你可以直接和我说说现在的感受。"
-    if is_acknowledgement_or_closing(text):
-        return "不用客气，先按刚才那个小步骤来就好，我会继续陪着你。"
-    if any(keyword in text for keyword in ("作业", "题", "写不完", "写完")):
-        return "作业堆在一起确实会很慌，先别全看完，挑最容易的一题或一小段先写起来。"
-    if any(keyword in text for keyword in ("任务", "完成不了", "来不及", "截止")):
-        return "担心任务完成不了真的会压得人喘不过气，先列出必须交的部分，把最小的一项做完。"
-    if any(keyword in text for keyword in ("考试", "复习", "成绩")):
-        return "考试压力确实容易让人乱掉，先选一个最薄弱的知识点，集中看二十分钟。"
-    if any(keyword in text for keyword in ("工作", "项目", "汇报")):
-        return "工作任务压上来确实很耗人，先把最急的交付项圈出来，只处理它的第一步。"
-    presets = {
-        "sad": "这确实会让人很焦虑，先别逼自己一次做完，我们先拆出最小的一步。",
-        "angry": "这件事确实容易让人烦躁，先稳一下，我们把最影响你的点单独拎出来。",
-        "happy": "听起来这件事让你挺有成就感，可以先接住这个好状态，再继续往前推进。",
-        "neutral": "我明白你的意思了，我们先抓住最关键的一点，再慢慢往下推进。",
-    }
-    return presets.get(emotion, presets["neutral"])
-
-
-def is_identity_question(text: str) -> bool:
-    normalized = (text or "").strip()
-    return any(pattern in normalized for pattern in ("你是谁", "你是什么", "你能做什么", "介绍一下你"))
-
-
-def is_user_identity_question(text: str) -> bool:
-    normalized = (text or "").strip()
-    return any(pattern in normalized for pattern in ("我是谁", "你知道我是谁", "知道我是谁", "认识我吗"))
-
-
-def is_greeting(text: str) -> bool:
-    normalized = (text or "").strip()
-    return normalized in {"你好", "您好", "嗨", "hello", "hi", "哈喽"}
-
-
-def is_acknowledgement_or_closing(text: str) -> bool:
-    normalized = (text or "").strip()
-    if not normalized:
-        return False
-    patterns = (
-        "好的",
-        "好吧",
-        "嗯嗯",
-        "嗯",
-        "谢谢",
-        "谢谢你",
-        "多谢",
-        "明白了",
-        "知道了",
-        "收到",
-        "可以",
-        "行",
-        "那好",
-        "先这样",
-    )
-    return any(pattern in normalized for pattern in patterns) and not any(
-        keyword in normalized for keyword in ("怎么办", "怎么做", "但是", "可是", "还是", "又")
-    )
+    return "我收到了，请继续说。"
 
 
 def polish_empathic_reply(reply_text: str, emotion: str, user_text: str = "") -> str:
-    text = (reply_text or "").strip()
-    if is_user_identity_question(user_text) and any(
-        keyword in text for keyword in ("任务", "作业", "步骤", "推进", "关键", "我明白你的意思")
-    ):
-        return fallback_empathic_reply(emotion, user_text)
-    if is_identity_question(user_text) and any(
-        keyword in text for keyword in ("任务", "作业", "步骤", "推进", "关键")
-    ):
-        return fallback_empathic_reply(emotion, user_text)
-    if is_greeting(user_text) and any(
-        keyword in text for keyword in ("任务", "作业", "步骤", "推进", "关键")
-    ):
-        return fallback_empathic_reply(emotion, user_text)
-    if is_acknowledgement_or_closing(user_text) and any(
-        keyword in text for keyword in ("作业", "任务", "先从", "最难", "最关键", "推进")
-    ):
-        return fallback_empathic_reply(emotion, user_text)
-    bad_question_patterns = ("吧？", "吗？", "呢？", "是不是", "你一定", "会不会")
-    if text.endswith(("?", "？")) or any(pattern in text for pattern in bad_question_patterns):
-        return fallback_empathic_reply(emotion, user_text)
-    return text
+    return (reply_text or "").strip() or fallback_empathic_reply(emotion, user_text)
 
 
 def call_llm_semantic_emotion(
@@ -1064,6 +1073,15 @@ def chat_index() -> str:
     function saveSessions(items) {
       localStorage.setItem(SESSIONS_KEY, JSON.stringify(items));
     }
+    function sessionsFromServerIndex(data) {
+      if (!data || !data.sessions) return null;
+      return data.sessions.map(s => ({
+        id: s.session_id,
+        title: s.title || "新对话",
+        updatedAt: s.updated_at ? Date.parse(s.updated_at) || Date.now() : Date.now(),
+        pinned: !!s.pinned
+      }));
+    }
     function messageKey(sessionId) {
       return "digi_human_chat_messages_" + sessionId;
     }
@@ -1078,13 +1096,8 @@ def chat_index() -> str:
       try {
         const resp = await fetch("/api/sessions");
         const data = await resp.json();
-        if (!resp.ok || !data.sessions) return loadSessions();
-        const sessions = data.sessions.map(s => ({
-          id: s.session_id,
-          title: s.title || "新对话",
-          updatedAt: s.updated_at ? Date.parse(s.updated_at) || Date.now() : Date.now(),
-          pinned: !!s.pinned
-        }));
+        const sessions = resp.ok ? sessionsFromServerIndex(data) : null;
+        if (!sessions) return loadSessions();
         saveSessions(sessions);
         renderSessions();
         return sessions;
@@ -1207,9 +1220,16 @@ def chat_index() -> str:
     async function deleteSession(sessionId) {
       closeSessionMenu();
       if (!confirm("确定删除这个对话？此操作会删除对应的本地 JSON。")) return;
-      await fetch("/api/sessions/" + encodeURIComponent(sessionId), { method: "DELETE" });
+      const resp = await fetch("/api/sessions/" + encodeURIComponent(sessionId), { method: "DELETE" });
+      const data = await resp.json();
+      if (!resp.ok) {
+        alert(data.detail || "删除失败");
+        return;
+      }
       localStorage.removeItem(messageKey(sessionId));
-      let sessions = await refreshSessionsFromServer();
+      let sessions = sessionsFromServerIndex(data.index) || [];
+      saveSessions(sessions);
+      renderSessions();
       if (activeSession === sessionId) {
         if (sessions.length) {
           await switchSession(sessions[0].id);
@@ -1710,9 +1730,22 @@ def delete_session(session_id: str) -> Dict[str, Any]:
     with SESSION_LOCK:
         SESSION_HISTORY.pop(sid, None)
     path = session_json_path(sid)
+    doc = read_json_file(path, {})
+    artifacts = delete_session_pipeline_jsons(doc) if isinstance(doc, dict) else {"deleted": [], "skipped": []}
+    deleted_json = False
     if path.exists():
         path.unlink()
-    return {"ok": True, "session_id": sid, "index": session_index()}
+        deleted_json = True
+    index = session_index()
+    return {
+        "ok": True,
+        "session_id": sid,
+        "deleted_json": deleted_json,
+        "deleted_json_path": str(path),
+        "deleted_pipeline_jsons": artifacts["deleted"],
+        "skipped_pipeline_jsons": artifacts["skipped"],
+        "index": index,
+    }
 
 
 @app.post("/api/analyze")
@@ -1732,6 +1765,19 @@ async def analyze(
     audio_emotion = "neutral"
     local_audio: Optional[Path] = None
     audio_name = ""
+    audio_result: Dict[str, Any] = {
+        "source": "sensevoice",
+        "status": "skipped",
+        "reason": "no_audio_uploaded",
+        "input_audio_name": "",
+        "input_audio_path": None,
+        "asr_text": "",
+        "sensevoice_text_raw": "",
+        "audio_emotion_raw": audio_emo_raw,
+        "audio_emotion": audio_emotion,
+        "sensevoice_first_result": {},
+        "sensevoice_raw_result": [],
+    }
 
     if audio is not None:
         suffix = Path(audio.filename or "upload.wav").suffix or ".wav"
@@ -1743,6 +1789,18 @@ async def analyze(
             asr_text = result["asr_text"]
             audio_emo_raw = result["audio_emotion_raw"]
             audio_emotion = result["audio_emotion"]
+            audio_result = {
+                "source": "sensevoice",
+                "status": "ok",
+                "input_audio_name": audio_name,
+                "input_audio_path": str(local_audio),
+                "asr_text": asr_text,
+                "sensevoice_text_raw": result.get("sensevoice_text_raw", ""),
+                "audio_emotion_raw": audio_emo_raw,
+                "audio_emotion": audio_emotion,
+                "sensevoice_first_result": result.get("sensevoice_first_result", {}),
+                "sensevoice_raw_result": result.get("sensevoice_raw_result", []),
+            }
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"ASR/SER失败: {exc}") from exc
 
@@ -1788,17 +1846,19 @@ async def analyze(
             user_text=final_text,
             history=context_before,
             temperature=0.4,
-            max_tokens=128,
+            max_tokens=256,
             timeout=ARGS.timeout,
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"LLM请求失败: {exc}") from exc
 
     payload = {
+        "task0_audio_asr_ser": audio_result,
         "task1_emotion_arbitration": {
             "asr_text": final_text,
             "audio_emotion_raw": audio_emo_raw,
             "audio_emotion": audio_emotion,
+            "audio_judgement": audio_result,
             "text_emotion": text_emotion,
             "text_confidence": text_result.get("confidence"),
             "text_confidence_type": text_result.get("confidence_type"),
@@ -1837,8 +1897,6 @@ async def analyze(
     )
 
     json_path = OUTPUT_JSON / f"pipeline_{request_id}.json"
-    json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-
     tts_audio_url = None
     want_tts = generate_tts.strip().lower() in {"1", "true", "yes", "y", "on"}
     want_cache = use_voice_cache.strip().lower() in {"1", "true", "yes", "y", "on"}
@@ -1855,6 +1913,7 @@ async def analyze(
     payload["pipeline_json"] = str(json_path)
     payload["tts_audio_url"] = tts_audio_url
     payload["tts_error"] = tts_error
+    json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     append_persistent_turn(
         sid,
         user_text=final_text,
