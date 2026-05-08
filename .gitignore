@@ -52,6 +52,9 @@ Thumbs.db
 project/samples/**
 !project/samples/.gitkeep
 !project/samples/2tts_16k.wav
+!project/samples/fan_16k.wav
+!project/samples/nanguo_16k.wav
+!project/samples/bucuo_16k.wav
 
 # local helper scripts not needed for GitHub demo
 project/scripts/extract_docx_text.py
