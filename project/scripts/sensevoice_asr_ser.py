@@ -1,7 +1,8 @@
-#python "D:\0digi-human\project\scripts\sensevoice_asr_ser.py" --audio "D:\0digi-human\project\samples\20260415_193009.m4a" --device "cuda:0" --disable-update
+#python "project\scripts\sensevoice_asr_ser.py" --audio "project\samples\20260415_193009.m4a" --device "cuda:0" --disable-update
 from __future__ import annotations
 import argparse
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -26,17 +27,17 @@ EMO_TO_4CLASS = {
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="SenseVoice ASR + SER to 4-class JSON")
     parser.add_argument("--audio", required=True, help="音频文件路径")
-    parser.add_argument("--device", default="cuda:0", help="推理设备，如 cuda:0 或 cpu")
+    parser.add_argument("--device", default=os.getenv("SENSEVOICE_DEVICE", "cuda:0"), help="推理设备，如 cuda:0 �?cpu")
     parser.add_argument("--language", default="auto", help="auto/zh/en/yue/ja/ko/nospeech")
-    parser.add_argument("--model", default="iic/SenseVoiceSmall", help="SenseVoice 模型名或本地路径")
+    parser.add_argument("--model", default=os.getenv("SENSEVOICE_MODEL", "iic/SenseVoiceSmall"), help="SenseVoice 模型名或本地路径")
     parser.add_argument("--output", default="", help="可选：输出 JSON 文件路径")
-    parser.add_argument("--disable-update", action="store_true", help="禁用 funasr 更新检查")
+    parser.add_argument("--disable-update", action="store_true", help="disable funasr update check")
     return parser.parse_args()
 
 
 def parse_text_and_emotion(raw_text: str) -> Dict[str, str]:
     tags = EMO_PATTERN.findall(raw_text or "")
-    # 情感标签通常在 token 中，如 NEUTRAL/HAPPY/SAD/ANGRY
+    # 情感标签通常�?token 中，�?NEUTRAL/HAPPY/SAD/ANGRY
     emo_raw: Optional[str] = next((t for t in tags if t in EMO_TO_4CLASS), None)
     asr_text = TEXT_TAG_PREFIX.sub("", raw_text or "").strip()
     emo_4class = EMO_TO_4CLASS.get(emo_raw or "EMO_UNK", "neutral")
@@ -51,7 +52,7 @@ def main() -> int:
     args = parse_args()
     audio_path = Path(args.audio)
     if not audio_path.exists():
-        raise SystemExit(f"音频不存在: {audio_path}")
+        raise SystemExit(f"音频不存�? {audio_path}")
 
     model = AutoModel(
         model=args.model,
@@ -93,7 +94,7 @@ def main() -> int:
         out_path = Path(args.output)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(out_text, encoding="utf-8")
-        print(f"\n已写入: {out_path}")
+        print(f"\n已写�? {out_path}")
 
     return 0
 

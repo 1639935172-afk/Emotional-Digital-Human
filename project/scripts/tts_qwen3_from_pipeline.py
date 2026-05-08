@@ -1,7 +1,7 @@
-#python .\project\scripts\tts_qwen3_from_pipeline.py --pipeline-json .\project\outputs\pipeline_e2e_result.json --use-voice-id zjh --use-voice-cache --output .\project\outputs\tts_from_pipeline.wav --device cuda:0
-#python .\project\scripts\tts_qwen3_from_pipeline.py --pipeline-json .\project\outputs\pipeline_e2e_result.json --use-voice-id zjh --build-voice-cache --use-voice-cache --output .\project\outputs\tts_from_pipeline.wav --device cuda:0
-#python .\project\scripts\tts_qwen3_from_pipeline.py --pipeline-json .\project\outputs\pipeline_e2e_result.json --use-voice-id zjh --output .\project\outputs\tts_from_pipeline.wav --device cuda:0
-#python "D:\0digi-human\project\scripts\tts_qwen3_from_pipeline.py" --pipeline-json "D:\0digi-human\project\outputs\pipeline_e2e_result.json" --ref-audio "D:\0digi-human\project\samples\20260415_193009_16k.wav" --ref-text "一二三四五。" --language "Chinese" --output "D:\0digi-human\project\outputs\tts_from_pipeline.wav" --device "cuda:0"
+#python .\project\scripts\tts_qwen3_from_pipeline.py --pipeline-json .\project\outputs\pipeline_e2e_result.json --use-voice-id 2tts --use-voice-cache --output .\project\outputs\tts_from_pipeline.wav --device cuda:0
+#python .\project\scripts\tts_qwen3_from_pipeline.py --pipeline-json .\project\outputs\pipeline_e2e_result.json --use-voice-id 2tts --build-voice-cache --use-voice-cache --output .\project\outputs\tts_from_pipeline.wav --device cuda:0
+#python .\project\scripts\tts_qwen3_from_pipeline.py --pipeline-json .\project\outputs\pipeline_e2e_result.json --use-voice-id 2tts --output .\project\outputs\tts_from_pipeline.wav --device cuda:0
+#python .\project\scripts\tts_qwen3_from_pipeline.py --pipeline-json .\project\outputs\pipeline_e2e_result.json --ref-audio .\project\samples\2tts_16k.wav --ref-text "清晨推开窗就能感受到微风拂面，世间万物都在安静慢慢生长，保持平和的心态，认真过好当下的每一天，用心感受生活里每一份细碎的美好与温柔。" --language Chinese --output .\project\outputs\tts_from_pipeline.wav --device cuda:0
 from __future__ import annotations
 
 import argparse
@@ -33,7 +33,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--pipeline-json",
         required=True,
-        help="pipeline_e2e_demo 输出 JSON 路径（建议相对项目根目录）",
+        help="pipeline JSON path",
     )
     p.add_argument(
         "--tts-model",
@@ -41,26 +41,26 @@ def parse_args() -> argparse.Namespace:
             "QWEN3_TTS_MODEL_PATH",
             PROJECT_ROOT / "models" / "Qwen3-TTS-12Hz-0.6B-Base",
         ),
-        help="Qwen3-TTS 模型路径（优先读取 QWEN3_TTS_MODEL_PATH）",
+        help="Qwen3-TTS model path",
     )
-    p.add_argument("--ref-audio", default="", help="参考音频路径（建议 16k wav）")
-    p.add_argument("--ref-text", default="", help="参考音频对应文本")
-    p.add_argument("--language", default="Chinese", help="TTS 语言（Chinese/English/...）")
+    p.add_argument("--ref-audio", default="", help="reference audio path, preferably 16k wav")
+    p.add_argument("--ref-text", default="", help="reference audio transcript")
+    p.add_argument("--language", default="Chinese", help="TTS language")
     p.add_argument(
         "--output",
         default=str(PROJECT_ROOT / "outputs" / "tts_from_pipeline.wav"),
-        help="输出 wav 路径",
+        help="output wav path",
     )
-    p.add_argument("--device", default="cuda:0", help="推理设备，如 cuda:0 或 cpu")
+    p.add_argument("--device", default=_env_or_default("TTS_DEVICE", "cuda:0"), help="device, e.g. cuda:0 or cpu")
     p.add_argument(
         "--voice-id",
         default="default_voice",
-        help="音色配置 ID，用于区分不同说话人配置",
+        help="voice profile id",
     )
     p.add_argument(
         "--use-voice-id",
         default="",
-        help="从 voice_profile.json 读取该 voice_id 的配置（ref_audio/ref_text 等）",
+        help="load ref_audio/ref_text from voice_profile.json by voice id",
     )
     p.add_argument(
         "--voice-profile",
@@ -68,7 +68,7 @@ def parse_args() -> argparse.Namespace:
             "VOICE_PROFILE_PATH",
             PROJECT_ROOT / "outputs" / "voice_profile.json",
         ),
-        help="音色配置保存路径",
+        help="voice profile JSON path",
     )
     p.add_argument(
         "--voice-cache-dir",
@@ -76,34 +76,34 @@ def parse_args() -> argparse.Namespace:
             "VOICE_CACHE_DIR",
             PROJECT_ROOT / "outputs" / "voice_cache",
         ),
-        help="音色缓存目录（优先读取 VOICE_CACHE_DIR）",
+        help="voice cache directory",
     )
     p.add_argument(
         "--build-voice-cache",
         action="store_true",
-        help="根据 ref_audio/ref_text 构建并保存 voice clone prompt 缓存",
+        help="build voice clone prompt cache from ref_audio/ref_text",
     )
     p.add_argument(
         "--use-voice-cache",
         action="store_true",
-        help="优先使用缓存的 voice clone prompt 生成",
+        help="use cached voice clone prompt when available",
     )
     p.add_argument(
         "--timeout-seconds",
         type=int,
         default=300,
-        help="单次 TTS 生成超时秒数，<=0 表示不限制，默认 300",
+        help="TTS timeout seconds; 0 disables timeout",
     )
     p.add_argument(
         "--disable-postprocess",
         action="store_true",
-        help="禁用 apply_tts_params 后处理，直接输出模型原始波形",
+        help="disable audio postprocess",
     )
     p.add_argument(
         "--enable-postprocess",
         dest="disable_postprocess",
         action="store_false",
-        help="启用 apply_tts_params 后处理（默认关闭）",
+        help="enable audio postprocess",
     )
     p.set_defaults(disable_postprocess=True)
     return p.parse_args()
@@ -122,17 +122,16 @@ def load_task3(path: Path) -> Tuple[str, str, Dict[str, Any]]:
 
 def load_voice_profile(path: Path, voice_id: str) -> Dict[str, Any]:
     if not path.exists():
-        raise FileNotFoundError(f"voice profile 不存在: {path}")
+        raise FileNotFoundError(f"voice profile not found: {path}")
     data = json.loads(path.read_text(encoding="utf-8"))
     voices = data.get("voices", {}) if isinstance(data, dict) else {}
     if not isinstance(voices, dict):
-        raise KeyError(f"voice profile 结构非法，缺少 voices: {path}")
+        raise KeyError(f"voice profile missing voices: {path}")
 
-    # 优先按 voices 的键名匹配（当前推荐存储方式）
     if voice_id in voices:
         profile = voices.get(voice_id, {})
     else:
-        # 兼容旧数据：键名可能是 default_voice，但内部 voice_id 才是 zjh
+        # Support legacy profiles keyed by default_voice while the inner voice_id differs.
         profile = None
         for _, v in voices.items():
             if isinstance(v, dict) and str(v.get("voice_id", "")).strip() == voice_id:
@@ -140,7 +139,7 @@ def load_voice_profile(path: Path, voice_id: str) -> Dict[str, Any]:
                 break
         if profile is None:
             available_keys = ", ".join(sorted(voices.keys()))
-            raise KeyError(f"voice_id 不存在: {voice_id}；可用键: [{available_keys}]")
+            raise KeyError(f"voice_id not found: {voice_id}; available keys: [{available_keys}]")
 
     if not isinstance(profile, dict):
         raise ValueError(f"voice_id 配置非法: {voice_id}")
@@ -148,7 +147,6 @@ def load_voice_profile(path: Path, voice_id: str) -> Dict[str, Any]:
 
 
 def _build_voice_clone_prompt(model: Qwen3TTSModel, ref_audio: Path, ref_text: str, language: str) -> Any:
-    # 不同版本 qwen-tts 可能参数签名略有差异，做兼容调用。
     try:
         return model.create_voice_clone_prompt(
             ref_audio=str(ref_audio),
@@ -163,7 +161,6 @@ def _build_voice_clone_prompt(model: Qwen3TTSModel, ref_audio: Path, ref_text: s
 
 
 def _generate_with_prompt(model: Qwen3TTSModel, text: str, language: str, voice_prompt: Any) -> Tuple[Any, int]:
-    # 不同版本对参数名支持可能不同，逐级尝试。
     try:
         return model.generate_voice_clone(
             text=text,
@@ -182,14 +179,12 @@ def _generate_with_prompt(model: Qwen3TTSModel, text: str, language: str, voice_
 
 
 def _load_voice_prompt_cache(cache_file: Path) -> Any:
-    # PyTorch 2.6+ 默认 weights_only=True，读取自定义对象会失败。
-    # 这里先走默认安全路径；若失败，再对“本地自建缓存”回退为 weights_only=False。
     try:
         return torch.load(str(cache_file), map_location="cpu")
     except Exception as e:
         msg = str(e)
         if "Weights only load failed" in msg or "Unsupported global" in msg:
-            print("[WARN] voice cache 触发 PyTorch 安全反序列化限制，回退 weights_only=False（仅限本地自建缓存）。")
+            print("[WARN] voice cache load failed with safe mode; retry weights_only=False for local cache")
             return torch.load(str(cache_file), map_location="cpu", weights_only=False)
         raise
 
@@ -201,7 +196,7 @@ def _ensure_mono_float32(wav: np.ndarray) -> np.ndarray:
 
 
 def apply_tts_params(wav: np.ndarray, sr: int, params: Dict[str, Any]) -> np.ndarray:
-    # 延迟导入，避免没有 librosa 时影响主流程报错定位
+    # Import lazily so missing librosa points to postprocess only.
     import librosa
 
     wav = _ensure_mono_float32(wav)
@@ -211,12 +206,11 @@ def apply_tts_params(wav: np.ndarray, sr: int, params: Dict[str, Any]) -> np.nda
     emo_intensity = float(params.get("emotion_intensity", 0.5))
     pause_ms = int(params.get("pause_ms", 0))
 
-    # 语速控制：>1 更快，<1 更慢
+    # Speed control: >1 faster, <1 slower.
     if abs(speed - 1.0) > 1e-3:
-        # librosa time_stretch 参数是倍率（>1 更快）
         wav = librosa.effects.time_stretch(wav, rate=max(0.5, min(1.8, speed)))
 
-    # 音高控制：单位半音
+    # Pitch control in semitones.
     if abs(pitch_semitone) > 1e-3:
         wav = librosa.effects.pitch_shift(
             wav,
@@ -224,7 +218,6 @@ def apply_tts_params(wav: np.ndarray, sr: int, params: Dict[str, Any]) -> np.nda
             n_steps=max(-6.0, min(6.0, pitch_semitone)),
         )
 
-    # 能量/情感强度控制：线性增益并做限幅
     gain = max(0.3, min(2.0, energy * (0.9 + 0.2 * emo_intensity)))
     wav = wav * gain
     peak = float(np.max(np.abs(wav)) + 1e-8)
@@ -261,22 +254,22 @@ def main() -> int:
     tts_model_arg = args.tts_model.strip() or str(profile.get("tts_model", "")).strip()
 
     if not ref_audio_arg:
-        raise SystemExit("缺少参考音频：请传 --ref-audio 或使用 --use-voice-id 从 profile 读取。")
+        raise SystemExit("missing reference audio: pass --ref-audio or use --use-voice-id with profile")
     if not ref_text:
-        raise SystemExit("缺少参考文本：请传 --ref-text 或使用 --use-voice-id 从 profile 读取。")
+        raise SystemExit("missing reference text: pass --ref-text or use --use-voice-id with profile")
     if not tts_model_arg:
-        raise SystemExit("缺少 TTS 模型路径：请传 --tts-model 或使用 --use-voice-id 从 profile 读取。")
+        raise SystemExit("missing TTS model path: pass --tts-model or use --use-voice-id with profile")
 
     ref_audio = Path(ref_audio_arg)
     tts_model_path = Path(tts_model_arg)
     cache_file = voice_cache_dir / f"{selected_voice_id}.pt"
 
     if not pipeline_json.exists():
-        raise SystemExit(f"pipeline json 不存在: {pipeline_json}")
+        raise SystemExit(f"pipeline json not found: {pipeline_json}")
     if not ref_audio.exists():
-        raise SystemExit(f"参考音频不存在: {ref_audio}")
+        raise SystemExit(f"reference audio not found: {ref_audio}")
     if not tts_model_path.exists():
-        raise SystemExit(f"TTS 模型路径不存在: {tts_model_path}")
+        raise SystemExit(f"TTS model path not found: {tts_model_path}")
 
     t1 = time.perf_counter()
     text, emotion, tts_params = load_task3(pipeline_json)
@@ -313,7 +306,7 @@ def main() -> int:
             try:
                 return _generate_with_prompt(model, text, language, voice_prompt)
             except TypeError:
-                # 某些版本不支持 prompt 直传，自动回退到 ref_audio/ref_text 方式
+                # Some qwen-tts versions do not accept prompt objects directly.
                 pass
         return model.generate_voice_clone(text=text, language=language, ref_audio=str(ref_audio), ref_text=ref_text)
 
@@ -325,8 +318,7 @@ def main() -> int:
                 wavs, sr = fut.result(timeout=args.timeout_seconds)
             except FuturesTimeoutError as e:
                 raise SystemExit(
-                    f"TTS 生成超时：>{args.timeout_seconds}s。"
-                    " 可尝试缩短文本/参考文本，或增大 --timeout-seconds。"
+                    f"TTS generation timed out after {args.timeout_seconds}s; use --timeout-seconds to adjust"
                 ) from e
     else:
         wavs, sr = _do_generate()

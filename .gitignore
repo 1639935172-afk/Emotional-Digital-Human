@@ -51,3 +51,9 @@ Thumbs.db
 # samples/audio raw
 project/samples/**
 !project/samples/.gitkeep
+!project/samples/2tts_16k.wav
+
+# local helper scripts not needed for GitHub demo
+project/scripts/extract_docx_text.py
+project/scripts/generate_emotion_samples.py
+project/scripts/regression_20.py

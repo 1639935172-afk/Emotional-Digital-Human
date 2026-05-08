@@ -1,8 +1,9 @@
-#python "D:\0digi-human\project\scripts\pipeline_e2e_demo.py" --audio "D:\0digi-human\project\samples\20260415_193009.m4a" --device "cuda:0" --disable-update --llm-url "http://127.0.0.1:8080/v1/chat/completions" --llm-model "Qwen3-8B-Q4_K_M.gguf"
-#python "D:\0digi-human\project\scripts\pipeline_e2e_demo.py" --audio "D:\0digi-human\project\samples\20260415_193009.m4a" --device "cuda:0" --disable-update --llm-url "http://127.0.0.1:8080/v1/chat/completions" --llm-model "Qwen3-8B-Q4_K_M.gguf" --output "D:\0digi-human\project\outputs\pipeline_e2e_result.json"
+# python project/scripts/pipeline_e2e_demo.py --audio project/samples/20260415_193009.m4a --device cuda:0 --disable-update
+# python project/scripts/pipeline_e2e_demo.py --audio project/samples/20260415_193009.m4a --output project/outputs/pipeline_e2e_result.json
 from __future__ import annotations
 import argparse
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any, Dict, Tuple
@@ -35,29 +36,30 @@ NEGATIVE_TERMINATION_PATTERNS = [
     "火大",
     "闭嘴",
 ]
-HAPPY_PATTERNS = ["高兴", "开心", "太棒了", "哈哈", "开心", "不错"]
+HAPPY_PATTERNS = ["高兴", "开心", "太棒了", "哈哈", "不错"]
 SAD_PATTERNS = ["难过", "低落", "烦", "压力", "累", "不想说话"]
 ANGRY_PATTERNS = ["生气", "火大", "忍不了", "烦死", "气死", "别烦我"]
 
-
 def parse_args() -> argparse.Namespace:
+    llm_host = os.getenv("LLM_HOST", "127.0.0.1")
+    llm_port = os.getenv("LLM_PORT", "8080")
     parser = argparse.ArgumentParser(description="Audio -> SenseVoice -> Rule Fusion -> LLM JSON")
-    parser.add_argument("--audio", required=True, help="音频文件路径")
-    parser.add_argument("--device", default="cuda:0", help="SenseVoice 推理设备")
+    parser.add_argument("--audio", required=True, help="闊抽鏂囦欢璺緞")
+    parser.add_argument("--device", default=os.getenv("SENSEVOICE_DEVICE", "cuda:0"), help="SenseVoice 鎺ㄧ悊璁惧")
     parser.add_argument("--language", default="auto", help="auto/zh/en/yue/ja/ko/nospeech")
-    parser.add_argument("--sv-model", default="iic/SenseVoiceSmall", help="SenseVoice 模型")
-    parser.add_argument("--llm-url", default="http://127.0.0.1:8080/v1/chat/completions", help="llama-server OpenAI 接口")
-    parser.add_argument("--llm-model", default="Qwen3-8B-Q4_K_M.gguf", help="llama-server model 字段")
-    parser.add_argument("--max-tokens", type=int, default=128, help="LLM 最大输出 tokens")
-    parser.add_argument("--temperature", type=float, default=0.2, help="LLM 温度")
-    parser.add_argument("--timeout", type=int, default=60, help="LLM 请求超时秒数")
-    parser.add_argument("--output", default="", help="可选：输出 JSON 路径")
-    parser.add_argument("--disable-update", action="store_true", help="禁用 funasr 更新检查")
+    parser.add_argument("--sv-model", default=os.getenv("SENSEVOICE_MODEL", "iic/SenseVoiceSmall"), help="SenseVoice 妯″瀷")
+    parser.add_argument("--llm-url", default=os.getenv("LLM_URL", f"http://{llm_host}:{llm_port}/v1/chat/completions"), help="llama-server OpenAI 鎺ュ彛")
+    parser.add_argument("--llm-model", default=os.getenv("LLM_MODEL", "Qwen3-8B-Q4_K_M.gguf"), help="llama-server model 瀛楁")
+    parser.add_argument("--max-tokens", type=int, default=128, help="LLM 鏈€澶ц緭鍑?tokens")
+    parser.add_argument("--temperature", type=float, default=0.2, help="LLM 娓╁害")
+    parser.add_argument("--timeout", type=int, default=60, help="LLM 璇锋眰瓒呮椂绉掓暟")
+    parser.add_argument("--output", default="", help="鍙€夛細杈撳嚭 JSON 璺緞")
+    parser.add_argument("--disable-update", action="store_true", help="disable funasr update check")
     return parser.parse_args()
 
 
 def build_tts_params(emotion: str) -> Dict[str, Any]:
-    # 任务三：将任务二输出的情感标签映射为可控声学参数
+    # 浠诲姟涓夛細灏嗕换鍔′簩杈撳嚭鐨勬儏鎰熸爣绛炬槧灏勪负鍙帶澹板鍙傛暟
     presets: Dict[str, Dict[str, Any]] = {
         "neutral": {
             "style": "neutral",
@@ -125,16 +127,14 @@ def has_negative_termination(text: str) -> bool:
 
 
 def fuse_emotion(audio_emotion: str, text_emotion: str, text_conf: float, text: str) -> Tuple[str, str]:
-    # 任务1核心规则：语音 neutral 且文本负向/终止语义时，优先文本情感
+    # Prefer text emotion when audio is neutral but text has clear negative intent.
     if audio_emotion == "neutral" and text_emotion in {"sad", "angry"} and (has_negative_termination(text) or text_conf >= 0.75):
         return text_emotion, "rule:audio_neutral_text_negative_override"
     if audio_emotion == text_emotion:
         return audio_emotion, "rule:audio_text_agree"
-    # 默认偏向文本（更贴近语义意图）
     if text_conf >= 0.75:
         return text_emotion, "rule:text_high_confidence"
     return audio_emotion, "rule:audio_fallback"
-
 
 def extract_json(text: str) -> Dict[str, Any]:
     text = (text or "").strip()
@@ -143,7 +143,7 @@ def extract_json(text: str) -> Dict[str, Any]:
     except json.JSONDecodeError:
         match = JSON_BLOCK.search(text)
         if not match:
-            raise ValueError("LLM 输出未包含 JSON")
+            raise ValueError("LLM output does not contain JSON")
         return json.loads(match.group(0))
 
 
@@ -196,7 +196,7 @@ def main() -> int:
     args = parse_args()
     audio = Path(args.audio)
     if not audio.exists():
-        raise SystemExit(f"音频不存在: {audio}")
+        raise SystemExit(f"闊抽涓嶅瓨鍦? {audio}")
 
     sv_model = AutoModel(
         model=args.sv_model,
@@ -260,7 +260,7 @@ def main() -> int:
         out_path = Path(args.output)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(out, encoding="utf-8")
-        print(f"\n已写入: {out_path}")
+        print(f"\n宸插啓鍏? {out_path}")
     return 0
 
 

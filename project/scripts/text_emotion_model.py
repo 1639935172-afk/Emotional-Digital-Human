@@ -31,7 +31,7 @@ LABEL_TO_4CLASS = {
     "Angry tone": "angry",
     "Sad tone": "sad",
     "Questioning tone": "neutral",
-    "Surprised tone": "neutral",
+    "Surprised tone": "happy",
     "Disgusted tone": "angry",
 }
 

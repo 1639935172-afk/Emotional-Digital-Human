@@ -39,11 +39,16 @@ DEFAULT_SESSION_DIR = os.getenv("WEB_DEMO_SESSION_DIR", str(OUTPUT_ROOT / "sessi
 
 DEFAULT_SV_MODEL = os.getenv("SENSEVOICE_MODEL", "iic/SenseVoiceSmall")
 DEFAULT_DEVICE = os.getenv("SENSEVOICE_DEVICE", "cuda:0")
-DEFAULT_LLM_URL = os.getenv("LLM_URL", "http://127.0.0.1:8080/v1/chat/completions")
+DEFAULT_LLM_HOST = os.getenv("LLM_HOST", "127.0.0.1")
+DEFAULT_LLM_PORT = int(os.getenv("LLM_PORT", "8080"))
+DEFAULT_LLM_URL = os.getenv(
+    "LLM_URL",
+    f"http://{DEFAULT_LLM_HOST}:{DEFAULT_LLM_PORT}/v1/chat/completions",
+)
 DEFAULT_LLM_MODEL = os.getenv("LLM_MODEL", "Qwen3-8B-Q4_K_M.gguf")
 DEFAULT_LLAMA_SERVER_EXE = os.getenv(
     "LLAMA_SERVER_EXE",
-    r"D:\Tools\llama-b8797-bin-win-cuda-12.4-x64\llama-server.exe",
+    str(PROJECT_ROOT / "tools" / "llama-server.exe"),
 )
 DEFAULT_LLAMA_MODEL_PATH = os.getenv(
     "LLAMA_MODEL_PATH",
@@ -73,8 +78,8 @@ VALID_EMOTIONS = {"happy", "sad", "angry", "neutral"}
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Web demo for multimodal emotional interaction")
-    p.add_argument("--host", default="127.0.0.1", help="web host")
-    p.add_argument("--port", type=int, default=7860, help="web port")
+    p.add_argument("--host", default=os.getenv("WEB_DEMO_HOST", "127.0.0.1"), help="web host")
+    p.add_argument("--port", type=int, default=int(os.getenv("WEB_DEMO_PORT", "7860")), help="web port")
     p.add_argument("--device", default=DEFAULT_DEVICE, help="SenseVoice device, e.g. cuda:0/cpu")
     p.add_argument("--sv-model", default=DEFAULT_SV_MODEL, help="SenseVoice model id/path")
     p.add_argument("--llm-url", default=DEFAULT_LLM_URL, help="OpenAI-compatible chat completions URL")
@@ -116,7 +121,7 @@ def ensure_dirs() -> None:
 def llama_base_url() -> str:
     parsed = urlparse(ARGS.llm_url)
     if not parsed.scheme or not parsed.netloc:
-        return "http://127.0.0.1:8080"
+        return f"http://{DEFAULT_LLM_HOST}:{DEFAULT_LLM_PORT}"
     return f"{parsed.scheme}://{parsed.netloc}"
 
 
@@ -1009,7 +1014,7 @@ def chat_index() -> str:
           <div class="meta">session: <span id="sessionId"></span></div>
         </div>
         <div class="top-actions">
-          <label class="control">voice_id <input id="voiceId" class="voice-id" type="text" placeholder="zjh"/></label>
+          <label class="control">voice_id <input id="voiceId" class="voice-id" type="text" placeholder="2tts"/></label>
           <label class="control"><input id="useCache" type="checkbox" checked/> voice cache</label>
           <label class="control"><input id="genTts" type="checkbox" checked/> 语音输出</label>
           <button class="ghost" onclick="resetContext()">清空上下文</button>
@@ -1590,7 +1595,7 @@ def index() -> str:
   </div>
   <div class="row">
     <label>voice_id（建议填写，生成TTS时复用）：</label><br/>
-    <input id="voiceId" type="text" placeholder="例如 zjh" style="width: 280px;"/>
+    <input id="voiceId" type="text" placeholder="例如 2tts" style="width: 280px;"/>
     <label style="margin-left: 12px;"><input id="useCache" type="checkbox" checked/> use voice cache</label>
     <label style="margin-left: 12px;"><input id="genTts" type="checkbox" checked/> generate tts</label>
   </div>
@@ -1604,7 +1609,7 @@ def index() -> str:
     <b>任务3：TTS参数</b>
     <pre id="task3">等待运行...</pre>
     <audio id="player" controls style="width:100%; margin-top: 8px;"></audio>
-  </div>
+  </div> 
   <div class="card" style="margin-top:12px;">
     <b>完整JSON</b>
     <pre id="full">等待运行...</pre>
@@ -1897,6 +1902,15 @@ async def analyze(
     )
 
     json_path = OUTPUT_JSON / f"pipeline_{request_id}.json"
+    payload["request_id"] = request_id
+    payload["session_id"] = sid
+    payload["context_turns"] = len(context_after)
+    payload["context_history"] = context_after
+    payload["pipeline_json"] = str(json_path)
+    payload["tts_audio_url"] = None
+    payload["tts_error"] = None
+    json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
     tts_audio_url = None
     want_tts = generate_tts.strip().lower() in {"1", "true", "yes", "y", "on"}
     want_cache = use_voice_cache.strip().lower() in {"1", "true", "yes", "y", "on"}
@@ -1906,11 +1920,6 @@ async def analyze(
             json_path, use_voice_id=use_voice_id, use_voice_cache=want_cache
         )
 
-    payload["request_id"] = request_id
-    payload["session_id"] = sid
-    payload["context_turns"] = len(context_after)
-    payload["context_history"] = context_after
-    payload["pipeline_json"] = str(json_path)
     payload["tts_audio_url"] = tts_audio_url
     payload["tts_error"] = tts_error
     json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")

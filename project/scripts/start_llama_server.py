@@ -22,8 +22,8 @@ import webbrowser
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-FALLBACK_SERVER_EXE = r"D:\Tools\llama-b8797-bin-win-cuda-12.4-x64\llama-server.exe"
-FALLBACK_MODEL = r"D:\0digi-human\project\models\Qwen3-8B-GGUF\Qwen3-8B-Q4_K_M.gguf"
+DEFAULT_SERVER_EXE = PROJECT_ROOT / "tools" / "llama-server.exe"
+DEFAULT_MODEL = PROJECT_ROOT / "models" / "Qwen3-8B-GGUF" / "Qwen3-8B-Q4_K_M.gguf"
 
 
 def resolve_default_server_exe() -> str:
@@ -31,20 +31,14 @@ def resolve_default_server_exe() -> str:
     if env_path:
         return env_path
     # 常见放置方式：与脚本同级项目目录下的 tools
-    candidate = PROJECT_ROOT / "tools" / "llama-server.exe"
-    if candidate.exists():
-        return str(candidate)
-    return FALLBACK_SERVER_EXE
+    return str(DEFAULT_SERVER_EXE)
 
 
 def resolve_default_model() -> str:
     env_path = os.getenv("LLAMA_MODEL_PATH", "").strip()
     if env_path:
         return env_path
-    candidate = PROJECT_ROOT / "models" / "Qwen3-8B-GGUF" / "Qwen3-8B-Q4_K_M.gguf"
-    if candidate.exists():
-        return str(candidate)
-    return FALLBACK_MODEL
+    return str(DEFAULT_MODEL)
 
 
 def parse_args() -> argparse.Namespace:
@@ -59,13 +53,13 @@ def parse_args() -> argparse.Namespace:
         default=resolve_default_model(),
         help="GGUF 模型路径（优先读取 LLAMA_MODEL_PATH）",
     )
-    parser.add_argument("--host", default="127.0.0.1", help="监听地址")
-    parser.add_argument("--port", type=int, default=8080, help="监听端口")
-    parser.add_argument("--ctx", type=int, default=4096, help="上下文长度（n_ctx）")
+    parser.add_argument("--host", default=os.getenv("LLAMA_HOST", "127.0.0.1"), help="监听地址")
+    parser.add_argument("--port", type=int, default=int(os.getenv("LLAMA_PORT", "8080")), help="监听端口")
+    parser.add_argument("--ctx", type=int, default=int(os.getenv("LLAMA_CTX", "4096")), help="上下文长度（n_ctx）")
     parser.add_argument(
         "--ngl",
         type=int,
-        default=99,
+        default=int(os.getenv("LLAMA_NGL", "99")),
         help="GPU offload 层数；默认 99，尽量使用 GPU",
     )
     parser.add_argument(
@@ -140,4 +134,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
